@@ -417,6 +417,8 @@ class CVShield:
 
     def setup_break_frame(self):
         """Create the break frame (initially hidden)."""
+        # Use a frame for the break UI. We'll place a background label into
+        # this frame at runtime when entering the break.
         self.break_frame = ttk.Frame(self.container, padding="20")
         
         # Configure styles for break frame
@@ -462,6 +464,15 @@ class CVShield:
             variable=self.progress_var
         )
         self.progress_bar.pack(pady=20)
+
+        # Placeholders for optional scenery background used during breaks
+        # These are created/destroyed at break time so we don't hold image
+        # references when not needed.
+        self._break_bg_image = None
+        self._break_bg_label = None
+        # Store previous window state so we can restore after fullscreen break
+        self._prev_geometry = None
+        self._was_fullscreen = False
 
     def setup_preferences_frame(self):
         """Create the preferences frame for editing settings inside the main window."""
@@ -573,6 +584,44 @@ class CVShield:
 
         on_complete: optional callback invoked (in the GUI thread) after the break finishes.
         """
+        # Store and change window state to fullscreen so the break is prominent.
+        try:
+            # Save geometry and fullscreen/state so we can restore later
+            prev_geom = None
+            try:
+                prev_geom = self.root.geometry()
+            except Exception:
+                prev_geom = None
+            prev_state = None
+            try:
+                prev_state = self.root.state()
+            except Exception:
+                prev_state = None
+            prev_fullscreen = False
+            try:
+                prev_fullscreen = bool(self.root.attributes("-fullscreen"))
+            except Exception:
+                prev_fullscreen = False
+
+            self._prev_state = {
+                'geometry': prev_geom,
+                'state': prev_state,
+                'fullscreen': prev_fullscreen,
+            }
+
+            # Enter fullscreen
+            try:
+                self.root.attributes("-fullscreen", True)
+            except Exception:
+                # Fallback: maximize the window if fullscreen isn't supported
+                try:
+                    self.root.state('zoomed')
+                except Exception:
+                    pass
+        except Exception:
+            # If any issue, continue without blocking (we'll still show break_frame)
+            self._prev_state = {'geometry': None, 'state': None, 'fullscreen': False}
+
         # Hide main frame and show break frame
         self.main_frame.pack_forget()
         self.break_frame.pack(fill='both', expand=True)
@@ -584,6 +633,40 @@ class CVShield:
         # Reset progress bar
         self.progress_var.set(0)
         
+        # Try to place the scenic background image (scenery.jpg) stretched to screen
+        try:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            # Prefer images/scenery.jpg inside the repository
+            scenery_path = os.path.join(base_dir, 'images', 'scenery.jpg')
+            if os.path.exists(scenery_path):
+                # Resize to current screen size
+                screen_w = self.root.winfo_screenwidth()
+                screen_h = self.root.winfo_screenheight()
+                img = Image.open(scenery_path).convert('RGBA')
+                img = img.resize((screen_w, screen_h), Image.LANCZOS)
+                self._break_bg_image = ImageTk.PhotoImage(img)
+                # If an existing label exists, replace its image; otherwise create one
+                if self._break_bg_label:
+                    try:
+                        self._break_bg_label.config(image=self._break_bg_image)
+                    except Exception:
+                        self._break_bg_label = tk.Label(self.break_frame, image=self._break_bg_image)
+                        self._break_bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+                else:
+                    self._break_bg_label = tk.Label(self.break_frame, image=self._break_bg_image)
+                    self._break_bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+                # Ensure UI elements are on top of the background
+                try:
+                    self.break_timer_label.lift()
+                    self.exercise_label.lift()
+                    self.progress_bar.lift()
+                except Exception:
+                    pass
+        except Exception:
+            # If background load fails for any reason, ignore and continue
+            self._break_bg_image = None
+            self._break_bg_label = None
+
         start_time = time.time()
         
         def update_break_timer():
@@ -591,9 +674,62 @@ class CVShield:
             remaining_time = max(0, break_duration - elapsed_time)
             
             if remaining_time <= 0:
-                # Hide break frame and show main frame
+                # Remove scenic background label if it exists and clear image refs
+                try:
+                    if self._break_bg_label:
+                        # Clear image first to avoid platform-specific issues
+                        try:
+                            self._break_bg_label.config(image='')
+                        except Exception:
+                            pass
+                        try:
+                            self._break_bg_label.destroy()
+                        except Exception:
+                            try:
+                                self._break_bg_label.place_forget()
+                            except Exception:
+                                pass
+                        self._break_bg_label = None
+                        self._break_bg_image = None
+                except Exception:
+                    pass
+
                 self.break_frame.pack_forget()
                 self.main_frame.pack(fill='both', expand=True)
+
+                # Restore previous window state (exit fullscreen and restore geometry/state)
+                try:
+                    # First, explicitly turn off fullscreen (safer across platforms)
+                    try:
+                        self.root.attributes("-fullscreen", False)
+                    except Exception:
+                        pass
+                    # Restore window state if it was changed (e.g., zoomed)
+                    try:
+                        if isinstance(self._prev_state, dict):
+                            prev_state = self._prev_state.get('state')
+                            prev_geom = self._prev_state.get('geometry')
+                            if prev_state and prev_state != 'normal':
+                                try:
+                                    self.root.state(prev_state)
+                                except Exception:
+                                    try:
+                                        self.root.state('normal')
+                                    except Exception:
+                                        pass
+                            if prev_geom:
+                                try:
+                                    self.root.geometry(prev_geom)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        # As a final fallback, attempt to normalize the window
+                        try:
+                            self.root.state('normal')
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
                 # Run callback (if provided) in mainloop
                 if callable(on_complete):
                     try:
