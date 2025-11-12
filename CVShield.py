@@ -424,15 +424,16 @@ class CVShield:
         # Configure styles for break frame
         style = ttk.Style()
         style.configure("Break.TFrame", background='#ebf8ff')
+        # Make break text much larger so it's obvious during fullscreen breaks
         style.configure("BreakTimer.TLabel",
-                       font=("Arial", 24, "bold"),
+                       font=("Arial", 72, "bold"),
                        foreground="#2b6cb0",
                        background="#ebf8ff")
         style.configure("Exercise.TLabel",
-                       font=("Arial", 18),
+                       font=("Arial", 36),
                        foreground="#2d3748",
                        background="#ebf8ff",
-                       wraplength=600)
+                       wraplength=1000)
         style.configure("Horizontal.TProgressbar",
                        background="#4299e1",
                        troughcolor="#e2e8f0")
